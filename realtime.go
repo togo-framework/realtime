@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"github.com/togo-framework/togo"
-	trealtime "github.com/togo-framework/togo/realtime"
 )
 
 func init() {
@@ -24,7 +23,7 @@ type broker struct {
 }
 
 // NewBroker creates an SSE broker.
-func NewBroker() trealtime.Broker { return &broker{clients: map[chan string]struct{}{}} }
+func NewBroker() togo.Broker { return &broker{clients: map[chan string]struct{}{}} }
 
 func (b *broker) Publish(event, data string) {
 	msg := fmt.Sprintf("event: %s\ndata: %s\n\n", event, data)
