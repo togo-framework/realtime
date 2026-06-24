@@ -1,24 +1,9 @@
-<!-- Thanks for contributing to togo! -->
+## What
 
-## What does this PR do?
-
-<!-- A clear, concise description. -->
-
-## Related issues
-
-Closes #
-
-## Type of change
-
-- [ ] Bug fix
-- [ ] New feature
-- [ ] Breaking change
-- [ ] Docs
-- [ ] Chore / refactor
+<!-- describe the change -->
 
 ## Checklist
-
-- [ ] `go build ./...`, `go vet ./...`, and `go test ./...` pass
-- [ ] Generated code still compiles (`togo generate` where relevant)
-- [ ] Docs / README updated if behavior changed
-- [ ] Conventional commit message
+- [ ] `go build ./...` passes
+- [ ] `go vet ./...` passes
+- [ ] tests added/updated (`go test ./...`)
+- [ ] README/docs updated if behavior changed
