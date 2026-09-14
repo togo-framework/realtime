@@ -1,9 +1,9 @@
 <!-- togo-header -->
 <div align="center">
-  <img src=".github/assets/togo-mark.svg" alt="togo" height="64" />
+  <picture><source media="(prefers-color-scheme: dark)" srcset=".github/assets/togo-mark-dark.svg" /><img src=".github/assets/togo-mark.svg" alt="ToGO" height="64" /></picture>
   <h1>togo-framework/realtime</h1>
   <p>
-    <a href="https://to-go.dev/marketplace"><img src="https://img.shields.io/badge/marketplace-to--go.dev-1FC7DC" alt="marketplace" /></a>
+    <a href="https://to-go.dev/marketplace"><img src="https://img.shields.io/badge/marketplace-to--go.dev-1F8A99" alt="marketplace" /></a>
     <a href="https://pkg.go.dev/github.com/togo-framework/realtime"><img src="https://pkg.go.dev/badge/github.com/togo-framework/realtime.svg" alt="pkg.go.dev" /></a>
     <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT" />
   </p>
@@ -20,7 +20,7 @@ togo install togo-framework/realtime
 
 <!-- togo-brand -->
 <p align="center">
-  <img src=".github/assets/togo-mark.svg" width="96" alt="togo" />
+  <picture><source media="(prefers-color-scheme: dark)" srcset=".github/assets/togo-mark-dark.svg" /><img src=".github/assets/togo-mark.svg" alt="ToGO" width="96" /></picture>
 </p>
 <h1 align="center">togo-framework/realtime</h1>
 <p align="center"><sub>part of the <a href="https://github.com/togo-framework">togo-framework</a> — the full-stack Go + React framework</sub></p>
