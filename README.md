@@ -33,6 +33,18 @@ togo install togo-framework/realtime
 
 It self-registers with the kernel on import. MIT.
 
+## Behaviour
+
+SSE only (`Content-Type: text/event-stream`); this plugin does not provide WebSocket. On connect the handler sends `Cache-Control: no-cache, no-transform`, `X-Accel-Buffering: no` (and `Connection: keep-alive` on HTTP/1.x), then flushes the headers and a `retry: 3000` line immediately. An idle stream gets a `: ping` comment every 20s.
+
+| Env | Default | Meaning |
+|---|---|---|
+| `REALTIME_KEEPALIVE` | `20s` | Keep-alive interval (Go duration); `0` disables |
+
+Programmatic use: `realtime.NewBroker(realtime.WithKeepAlive(15 * time.Second))`.
+
+The handler clears the connection write deadline (`http.ResponseController`) so an `http.Server` `WriteTimeout` does not cut the stream. If you wrap the `ResponseWriter`, it must implement `Unwrap()` or `Flush()`, otherwise the handler answers 500 `streaming unsupported`. Reverse proxies other than nginx should disable response buffering for this route (for Go's `httputil.ReverseProxy`, `FlushInterval = -1`).
+
 
 ---
 
