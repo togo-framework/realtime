@@ -2,11 +2,16 @@ package realtime
 
 import (
 	"bufio"
+	"bytes"
+	"context"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -216,4 +221,112 @@ func TestThroughReverseProxy(t *testing.T) {
 		}
 	}
 	t.Fatal("event not delivered through proxy")
+}
+
+// reactiveWriter simulates a client that publishes the moment it sees the
+// stream open: its Flush publishes an event as soon as the retry preamble has
+// been flushed, then ends the request once that event has been written.
+type reactiveWriter struct {
+	b         *broker
+	cancel    context.CancelFunc
+	h         http.Header
+	mu        sync.Mutex
+	body      strings.Builder
+	published bool
+	failEvent bool // fail the write of the published event
+}
+
+func (w *reactiveWriter) Header() http.Header { return w.h }
+func (w *reactiveWriter) WriteHeader(int)     {}
+func (w *reactiveWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.failEvent && bytes.Contains(p, []byte("event:")) {
+		return 0, errors.New("broken pipe")
+	}
+	return w.body.Write(p)
+}
+func (w *reactiveWriter) Flush() {
+	w.mu.Lock()
+	body := w.body.String()
+	publish := !w.published && strings.Contains(body, "retry:")
+	if publish {
+		w.published = true
+	}
+	w.mu.Unlock()
+	if publish {
+		w.b.Publish("first", "1")
+	}
+	if strings.Contains(body, "event: first") {
+		w.cancel()
+	}
+}
+
+func TestEventPublishedRightAfterPreambleIsDelivered(t *testing.T) {
+	b := NewBroker(WithKeepAlive(time.Hour)).(*broker)
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	w := &reactiveWriter{b: b, cancel: cancel, h: http.Header{}}
+	b.Handler()(w, httptest.NewRequest("GET", "/events", nil).WithContext(ctx))
+	if !strings.Contains(w.body.String(), "event: first\ndata: 1\n\n") {
+		t.Fatalf("event published right after the preamble was lost; stream = %q", w.body.String())
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if len(b.clients) != 0 {
+		t.Fatal("subscriber not removed after the request ended")
+	}
+}
+
+// deadlineErrWriter supports flushing but fails to clear the write deadline
+// with an error other than http.ErrNotSupported.
+type deadlineErrWriter struct {
+	noFlushWriter
+}
+
+func (w *deadlineErrWriter) Flush()                           {}
+func (w *deadlineErrWriter) SetWriteDeadline(time.Time) error { return errors.New("conn closed") }
+
+func TestWriteDeadlineFailureIsLoggedNotSilent(t *testing.T) {
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	b := NewBroker().(*broker)
+	w := &deadlineErrWriter{noFlushWriter{h: http.Header{}}}
+	b.Handler()(w, httptest.NewRequest("GET", "/events", nil))
+	if w.code != http.StatusInternalServerError {
+		t.Fatalf("code = %d, want 500 instead of an empty 200", w.code)
+	}
+	if strings.Contains(w.body.String(), "retry:") {
+		t.Fatal("stream preamble leaked into error response")
+	}
+	if ct := w.h.Get("Content-Type"); strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("Content-Type = %q", ct)
+	}
+	if !strings.Contains(logs.String(), "conn closed") {
+		t.Fatalf("write-deadline failure not logged; logs = %q", logs.String())
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if len(b.clients) != 0 {
+		t.Fatal("subscriber registered despite error")
+	}
+}
+
+func TestWriteFailureRemovesSubscriber(t *testing.T) {
+	b := NewBroker(WithKeepAlive(time.Hour)).(*broker)
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	w := &reactiveWriter{b: b, cancel: func() {}, h: http.Header{}, failEvent: true}
+	b.Handler()(w, httptest.NewRequest("GET", "/events", nil).WithContext(ctx))
+	if ctx.Err() != nil {
+		t.Fatal("handler kept streaming after a write failure")
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if len(b.clients) != 0 {
+		t.Fatal("subscriber not removed after a write failure")
+	}
 }

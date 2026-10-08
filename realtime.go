@@ -83,8 +83,11 @@ func (b *broker) Publish(event, data string) {
 // The stream is long-lived, so the handler clears the connection write
 // deadline via http.ResponseController; an http.Server WriteTimeout would
 // otherwise cut the stream when it elapses. Writers that do not support
-// deadlines (ErrNotSupported) are left as they are. A ResponseWriter that
-// cannot flush gets a 500 instead of a silently buffered stream.
+// deadlines (ErrNotSupported) are left as they are; any other failure to clear
+// the deadline is logged and answered with a 500. A ResponseWriter that cannot
+// flush gets a 500 instead of a silently buffered stream. The subscriber is
+// registered before the first flush, so no event published after the client
+// sees the stream open is lost.
 func (b *broker) Handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rc := http.NewResponseController(w)
@@ -95,24 +98,21 @@ func (b *broker) Handler() http.HandlerFunc {
 		if r.ProtoMajor == 1 {
 			h.Set("Connection", "keep-alive") // forbidden on HTTP/2+
 		}
-		if err := rc.Flush(); err != nil {
+		fail := func(msg string) {
 			h.Del("Content-Type")
 			h.Del("Cache-Control")
 			h.Del("X-Accel-Buffering")
 			h.Del("Connection")
-			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
-			return
+			http.Error(w, msg, http.StatusInternalServerError)
 		}
 		if err := rc.SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
-			return
-		}
-		if _, err := fmt.Fprint(w, "retry: 3000\n\n"); err != nil {
-			return
-		}
-		if err := rc.Flush(); err != nil {
+			slog.Warn("realtime: cannot clear the stream write deadline", "error", err)
+			fail("stream setup failed")
 			return
 		}
 
+		// Subscribe before anything is flushed: once a client sees the stream
+		// open it may publish at once, and that event must not be lost.
 		ch := make(chan string, 16)
 		b.mu.Lock()
 		b.clients[ch] = struct{}{}
@@ -122,6 +122,17 @@ func (b *broker) Handler() http.HandlerFunc {
 			delete(b.clients, ch)
 			b.mu.Unlock()
 		}()
+
+		if err := rc.Flush(); err != nil {
+			fail("streaming unsupported")
+			return
+		}
+		if _, err := fmt.Fprint(w, "retry: 3000\n\n"); err != nil {
+			return
+		}
+		if err := rc.Flush(); err != nil {
+			return
+		}
 
 		var tick <-chan time.Time
 		if b.keepAlive > 0 {
