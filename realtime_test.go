@@ -330,3 +330,46 @@ func TestWriteFailureRemovesSubscriber(t *testing.T) {
 		t.Fatal("subscriber not removed after a write failure")
 	}
 }
+
+func TestEncodeEvent(t *testing.T) {
+	cases := []struct{ name, event, data, want string }{
+		{"single line", "msg", "hello", "event: msg\ndata: hello\n\n"},
+		{"empty payload", "msg", "", "event: msg\ndata: \n\n"},
+		{"LF", "msg", "a\nb", "event: msg\ndata: a\ndata: b\n\n"},
+		{"CRLF", "msg", "a\r\nb", "event: msg\ndata: a\ndata: b\n\n"},
+		{"CR", "msg", "a\rb", "event: msg\ndata: a\ndata: b\n\n"},
+		{"mixed and trailing", "msg", "a\r\nb\rc\n", "event: msg\ndata: a\ndata: b\ndata: c\ndata: \n\n"},
+		{"injection attempt", "msg", "x\n\nevent: admin\ndata: y", "event: msg\ndata: x\ndata: \ndata: event: admin\ndata: data: y\n\n"},
+		{"event name line breaks dropped", "a\r\nevent: b", "z", "event: aevent: b\ndata: z\n\n"},
+	}
+	for _, c := range cases {
+		if got := encodeEvent(c.event, c.data); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// A multi-line payload published through the broker arrives as consecutive
+// data: lines followed by exactly one blank line (end of event).
+func TestPublishMultiLinePayloadOverTheWire(t *testing.T) {
+	b, srv := newTestBroker(t, 0)
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	r := bufio.NewReader(resp.Body)
+	waitClients(t, b, 1)
+	readLine(t, r) // retry: 3000
+	readLine(t, r) // blank
+
+	b.Publish("msg", "l1\r\nl2\rl3\nl4")
+	var got []string
+	for i := 0; i < 6; i++ {
+		got = append(got, readLine(t, r))
+	}
+	want := []string{"event: msg", "data: l1", "data: l2", "data: l3", "data: l4", ""}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
