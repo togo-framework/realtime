@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -64,8 +65,30 @@ func NewBroker(opts ...Option) togo.Broker {
 	return b
 }
 
+// encodeEvent frames one SSE message. Per the WHATWG spec every line of the
+// payload needs its own "data:" field, and CR, LF and CRLF are all line
+// terminators, so a payload is split on all three; written verbatim, a line
+// break would end the field and let the rest of the payload be parsed as new
+// fields (e.g. "event:" or "id:"). The event name is a single-line field, so
+// line breaks in it are dropped.
+func encodeEvent(event, data string) string {
+	var sb strings.Builder
+	event = strings.NewReplacer("\r", "", "\n", "").Replace(event)
+	sb.WriteString("event: ")
+	sb.WriteString(event)
+	sb.WriteByte('\n')
+	data = strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(data)
+	for _, line := range strings.Split(data, "\n") {
+		sb.WriteString("data: ")
+		sb.WriteString(line)
+		sb.WriteByte('\n')
+	}
+	sb.WriteByte('\n')
+	return sb.String()
+}
+
 func (b *broker) Publish(event, data string) {
-	msg := fmt.Sprintf("event: %s\ndata: %s\n\n", event, data)
+	msg := encodeEvent(event, data)
 	b.mu.RLock()
 	for c := range b.clients {
 		select {
